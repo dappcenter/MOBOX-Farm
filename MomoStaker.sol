@@ -74,10 +74,10 @@ contract MoMoStaker is Ownable, ReentrancyGuard {
     uint256 constant devTeamRate = 2000;
 
     // MoMo-ERC721 Token address, this type of NFT is divided into three types: V4, V5, and V6. V4 and V5 are probabilistically opened after the momoMinter contract burns the KeyToken. The V6 version of the NFT will be mined in a limited amount
-     // The prototype ranges of V4-V6 are 4xxxx, 5xxxx, 6xxxx respectively
+    // The prototype ranges of V4-V6 are 4xxxx, 5xxxx, 6xxxx respectively
     IMoMoToken _momoToken;
-     // MoMo-ERC1155 Token contract address. This type of NFT is divided into 3 types: V1, V2, and V3, all of which are probabilistically opened after the momoMinter contract burns the KeyToken
-     // The prototype (token id) ranges of V1-V3 are 1xxxx, 2xxxx, 3xxxx
+    // MoMo-ERC1155 Token contract address. This type of NFT is divided into 3 types: V1, V2, and V3, all of which are probabilistically opened after the momoMinter contract burns the KeyToken
+    // The prototype (token id) ranges of V1-V3 are 1xxxx, 2xxxx, 3xxxx
     IMoMoMToken _momomToken;
     // Mobox-ERC20 Token address
     IERC20 _moboxToken;
@@ -110,8 +110,8 @@ contract MoMoStaker is Ownable, ReentrancyGuard {
 
     uint256 public totalHashrate;
     // uint256 public totalHashrate;
-     // The number of different NFT prototypes of users V1-V4 is counted, and the mapping key is user address << 96 + NFT prototype. 
-     //This recording method can avoid the use of nested mapping to record the information
+    // The number of different NFT prototypes of users V1-V4 is counted, and the mapping key is user address << 96 + NFT prototype. 
+    //This recording method can avoid the use of nested mapping to record the information
 
     mapping (uint256 => uint256) _stakingMomoAmountMap;
     // ERC721(V4-V6) NFT, user address => ERC721 tokenId Array
@@ -145,7 +145,7 @@ contract MoMoStaker is Ownable, ReentrancyGuard {
         _momomToken = IMoMoMToken(momomToken_);
         _moboxToken = IERC20(moboxToken_);
 
-       // The authorization is used to upgrade ERC721 NFT in this contract by users. Upgrading ERC721 requires ERC1155 specified by burn
+        // The authorization is used to upgrade ERC721 NFT in this contract by users. Upgrading ERC721 requires ERC1155 specified by burn
         _momomToken.setApprovalForAll(momoToken_, true);     
     }
 
@@ -184,27 +184,27 @@ contract MoMoStaker is Ownable, ReentrancyGuard {
         }
     }
 
-    function _rewardPerMillion(uint256 lastTimeRewardApplicable_) internal view returns (uint256) {
-        if (totalHashrate == 0) {
+    function _rewardPerHashrate(uint256 lastTimeRewardApplicable_) internal view returns (uint256) {
+        if (totalHashrate == 0 || block.timestamp <= rewardStartTime) {
             return rewardPerTokenStored;
         }
         return rewardPerTokenStored.add(
-            lastTimeRewardApplicable_.sub(lastUpdateTime).mul(rewardRate).mul(1e6).div(totalHashrate)
+            lastTimeRewardApplicable_.sub(lastUpdateTime).mul(rewardRate).div(totalHashrate)
         );
     }
 
-    function rewardPerMillion() external view returns (uint256) {
-        return _rewardPerMillion(lastTimeRewardApplicable());
+    function rewardPerHashrate() external view returns (uint256) {
+        return _rewardPerHashrate(lastTimeRewardApplicable());
     }
 
-    function _earned(address user_, uint256 rewardPerMillion_) internal view returns (uint256) {
+    function _earned(address user_, uint256 rewardPerHashrate_) internal view returns (uint256) {
         UserRewardInfo memory info = _userRewardInfoMap[user_];
         uint256 userHashRate = uint256(info.userHashrateFixed).mul(uint256(info.userHashratePercent) + 10000).div(10000);
-        return userHashRate.mul(rewardPerMillion_.sub(uint256(info.userRewardPerTokenPaid))).div(1e6).add(uint256(info.userReward));
+        return userHashRate.mul(rewardPerHashrate_.sub(uint256(info.userRewardPerTokenPaid))).add(uint256(info.userReward));
     }
 
     function earned(address user_) external view returns(uint256) {
-        return _earned(user_, _rewardPerMillion(lastTimeRewardApplicable()));
+        return _earned(user_, _rewardPerHashrate(lastTimeRewardApplicable()));
     }
 
     function devTeamEarned() external view returns(uint256) {
@@ -212,20 +212,27 @@ contract MoMoStaker is Ownable, ReentrancyGuard {
             return rewardsReleasedForDev;
         } else {
             uint256 lastUpdateDev = Math.max(rewardStartTime, lastUpdateTimeForDev);
-            return rewardsReleasedForDev.add(
-                Math.min(block.timestamp, periodFinish).sub(lastUpdateDev).mul(rewardRate).mul(devTeamRate).div(10000 - devTeamRate)
-            );
+            uint256 currentUpdateTime = Math.min(block.timestamp, periodFinish);
+            if (currentUpdateTime <= lastUpdateDev) {
+                return rewardsReleasedForDev;
+            } else {
+                return rewardsReleasedForDev.add(
+                    currentUpdateTime.sub(lastUpdateDev).mul(rewardRate).mul(devTeamRate).div(10000 - devTeamRate)
+                );
+            }
         }
     }
 
     function _updateReward(address user_) internal {
         uint256 lastTimeReward = lastTimeRewardApplicable();
-        rewardPerTokenStored = _rewardPerMillion(lastTimeReward);
+        rewardPerTokenStored = _rewardPerHashrate(lastTimeReward);
         lastUpdateTime = lastTimeReward;
 
-        UserRewardInfo storage info = _userRewardInfoMap[user_];
-        info.userReward = SafeMathExt.safe128(_earned(user_, rewardPerTokenStored));
-        info.userRewardPerTokenPaid = SafeMathExt.safe128(rewardPerTokenStored);
+        if (user_ != address(0)) {
+            UserRewardInfo storage info = _userRewardInfoMap[user_];
+            info.userReward = SafeMathExt.safe128(_earned(user_, rewardPerTokenStored));
+            info.userRewardPerTokenPaid = SafeMathExt.safe128(rewardPerTokenStored);
+        }
     }
 
     function _updateDevTeamReward() internal {
@@ -237,26 +244,23 @@ contract MoMoStaker is Ownable, ReentrancyGuard {
         } 
     }
 
-    //  Start a new round of mining every time, need to call 'initReward' first
+    // Start a new round of mining every time, need to call 'initReward' first
     function initReward(uint256 rewardPerDay_, uint256 rewardStart_, uint256 days_) external {
         require(msg.sender == rewardMgr, "invalid caller");
         require(block.timestamp > periodFinish, "stake not finish");
         require(rewardStart_ > periodFinish && days_ > 0, "invalid start");
         
-        if (rewardRate > 0) {
-            _changeRewardRate(0);
-        }
-        
+        _updateDevTeamReward();
+        _updateReward(address(0));
+
         rewardStartTime = rewardStart_;
-        // updateReward
-        rewardPerTokenStored = _rewardPerMillion(lastTimeRewardApplicable());
         rewardsDuration = days_.mul(86400);
         rewardRate = rewardPerDay_.mul(10000 - devTeamRate).div(10000).div(86400);
 
         uint256 balance = _moboxToken.balanceOf(address(this));
         require(rewardRate <= balance.div(rewardsDuration), "not enough mbox");
 
-        lastUpdateTime = block.timestamp;
+        lastUpdateTime = rewardStartTime;
         periodFinish = rewardStartTime.add(rewardsDuration);
         lastUpdateTimeForDev = rewardStartTime;
 
@@ -265,7 +269,7 @@ contract MoMoStaker is Ownable, ReentrancyGuard {
 
     function changeRewardRate(uint256 rewardPerDay_) external {
         require(msg.sender == rewardMgr, "invalid caller");
-        require(block.timestamp < periodFinish, "stake not finish");
+        require(block.timestamp > rewardStartTime && block.timestamp < periodFinish, "invaild call");
         _changeRewardRate(rewardPerDay_);
     }
 
@@ -275,7 +279,7 @@ contract MoMoStaker is Ownable, ReentrancyGuard {
 
         // updateReward
         uint256 lastTimeReward = lastTimeRewardApplicable();
-        rewardPerTokenStored = _rewardPerMillion(lastTimeReward);
+        rewardPerTokenStored = _rewardPerHashrate(lastTimeReward);
         lastUpdateTime = lastTimeReward;
 
         rewardRate = rewardPerDay_.mul(10000 - devTeamRate).div(10000).div(86400);
